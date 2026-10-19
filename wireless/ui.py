@@ -1,4 +1,4 @@
-"""Simple panel: one card per wireless device, with a large percentage."""
+"""简洁面板：每个无线设备一张卡片，并突出显示大号百分比。"""
 
 from __future__ import annotations
 
@@ -236,7 +236,7 @@ class Panel:
         self._refreshing = False
         self._positioned = False
 
-    # -- construction ------------------------------------------------------
+    # -- 构建界面 -----------------------------------------------------------
     def build(self) -> None:
         root = self.root
         root.title("无线外设电量")
@@ -447,8 +447,8 @@ class Panel:
             card.outer.destroy()
         self.cards = []
         self.card_keys = []
-        # Do not pre-create a mouse card: unpaired channels must never appear,
-        # even for the short time before the first background read finishes.
+        # 不要预先创建鼠标卡片：未配对的通道绝不能出现，即使在首次后台
+        # 读取完成前的短暂时间内也不行。
         card = BatteryCard(self.cards_frame, self)
         card.set_placeholder("other", "正在查找无线设备…")
         self._place_card(card, 0, single=True)
@@ -493,7 +493,7 @@ class Panel:
         except Exception:
             pass
 
-    # -- updates -----------------------------------------------------------
+    # -- 更新 ---------------------------------------------------------------
     def update_snapshot(self, snapshot: Snapshot) -> None:
         self.snapshot = snapshot
         readings = snapshot.readings
@@ -601,7 +601,7 @@ class Panel:
             text=f"每 {self.app.config.refresh_seconds} 秒自动刷新"
         )
 
-    # -- actions -----------------------------------------------------------
+    # -- 操作 ---------------------------------------------------------------
     def refresh(self) -> None:
         self.set_refreshing(True)
         self.app.request_refresh("manual")
@@ -617,9 +617,8 @@ class Panel:
             if self.root.state() == "iconic":
                 self.root.state("normal")
             if not self._positioned:
-                # Do the centering after the first mapping.  Some Tk 9 /
-                # multi-monitor combinations restore a withdrawn window on
-                # the monitor under the cursor, ignoring the pre-map position.
+                # 首次显示映射完成后再居中。某些 Tk 9 与多显示器组合会把
+                # 已隐藏的窗口恢复到光标所在显示器，忽略映射前设置的坐标。
                 self.root.update_idletasks()
                 self._center_window(900, 660)
                 self._positioned = True

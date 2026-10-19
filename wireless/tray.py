@@ -1,16 +1,15 @@
-"""Win32 notification-area host.
+"""Win32 通知区域宿主。
 
-The tray lives on its own thread so that GetMessageW can block at zero CPU
-while Tkinter runs its own main loop on the main thread.  All communication in
-either direction is via PostMessage/queue.Queue; Tk objects are never touched
-from this thread.
+托盘运行在独立线程中，因此 GetMessageW 可以零 CPU 阻塞，而 Tkinter 在主线程
+运行自己的事件循环。两个方向的所有通信都通过 PostMessage/queue.Queue 完成；
+托盘线程绝不直接操作 Tk 对象。
 
-Lifecycle rules implemented here:
+本模块实现的生命周期规则：
 
-* NIM_MODIFY updates an existing icon; NIM_DELETE is only used when a slot is
-  actually removed, and a re-added slot always goes through NIM_ADD again.
-* WM_CLOSE destroys the window; WM_DESTROY calls PostQuitMessage(0), which is
-  what lets the thread (and therefore the process) really exit.
+* 更新已有图标使用 NIM_MODIFY；只有真正移除槽位时才使用 NIM_DELETE，
+  重新出现的槽位一律重新执行 NIM_ADD。
+* WM_CLOSE 负责销毁窗口；WM_DESTROY 调用 PostQuitMessage(0)，这样线程
+  （以及整个进程）才能真正退出。
 """
 
 from __future__ import annotations
@@ -297,7 +296,7 @@ class TrayThread(threading.Thread):
         if self.debug and self._debug_log:
             self._debug_log(message)
 
-    # -- lifecycle ---------------------------------------------------------
+    # -- 生命周期 -----------------------------------------------------------
     def run(self) -> None:
         try:
             self._create_window()
@@ -349,7 +348,7 @@ class TrayThread(threading.Thread):
         message = MSG()
         while True:
             result = user32.GetMessageW(ctypes.byref(message), None, 0, 0)
-            if result == 0:  # WM_QUIT
+            if result == 0:  # 收到 WM_QUIT
                 break
             if result == -1:
                 break
@@ -369,7 +368,7 @@ class TrayThread(threading.Thread):
         if hwnd:
             user32.PostMessageW(hwnd, WM_APP_SET_INTERVAL, int(seconds), 0)
 
-    # -- window procedure --------------------------------------------------
+    # -- 窗口过程 -----------------------------------------------------------
     def _wndproc(self, hwnd, message, wparam, lparam):
         try:
             if message == WM_TIMER and wparam == TIMER_ID:
@@ -398,10 +397,9 @@ class TrayThread(threading.Thread):
                 return 0
             if message == WM_CLOSE:
                 if not self._stopping:
-                    # An external WM_CLOSE must ask the Tk controller to
-                    # perform the full shutdown.  Destroying only this hidden
-                    # window would leave a visible Tk panel (or a window-less
-                    # process) behind.
+                    # 来自外部的 WM_CLOSE 必须请求 Tk 控制器执行完整退出。
+                    # 只销毁这个隐藏窗口会留下仍然可见的 Tk 面板，或留下
+                    # 没有窗口的进程。
                     self.controller.request_quit_from_tray()
                     return 0
                 self._remove_all_icons()
@@ -409,8 +407,8 @@ class TrayThread(threading.Thread):
                 user32.DestroyWindow(hwnd)
                 return 0
             if message == WM_DESTROY:
-                # Mandatory: without this the process stays alive as a
-                # window-less zombie and the single-instance mutex is held.
+                # 必须调用：否则进程会变成没有窗口的僵尸，并一直占着
+                # 单实例互斥体。
                 user32.PostQuitMessage(0)
                 return 0
             if message == WM_QUERYENDSESSION:
@@ -420,8 +418,8 @@ class TrayThread(threading.Thread):
                     user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)
                 return 0
             if self._taskbar_created and message == self._taskbar_created:
-                # Explorer restarted: deleted icons cannot be modified back;
-                # every slot must be NIM_ADD'ed again.
+                # Explorer 重启后，已经删除的图标无法通过修改恢复；
+                # 每个槽位都必须重新执行 NIM_ADD。
                 self._log("TaskbarCreated received; re-adding tray icons")
                 self._slots.clear()
                 self._icons.clear()
@@ -432,7 +430,7 @@ class TrayThread(threading.Thread):
             return 0
         return user32.DefWindowProcW(hwnd, message, wparam, lparam)
 
-    # -- icons -------------------------------------------------------------
+    # -- 图标 ---------------------------------------------------------------
     def _add_or_update_icons(self) -> None:
         if not self.hwnd:
             return
@@ -469,9 +467,8 @@ class TrayThread(threading.Thread):
                 data.szTip = tip[:127]
                 if not shell32.Shell_NotifyIconW(NIM_MODIFY, ctypes.byref(data)):
                     self._log(f"NIM_MODIFY failed for uid={uid}; re-adding")
-                    # The icon was deleted behind our back (e.g. Explorer
-                    # restart).  NIM_MODIFY cannot revive it; NIM_ADD is the
-                    # only correct recovery.
+                    # 图标可能在程序不知情时被删除（例如 Explorer 重启）。
+                    # NIM_MODIFY 无法恢复它，NIM_ADD 是唯一正确的补救方式。
                     self._slots.pop(uid, None)
                     data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP
                     if shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(data)):
@@ -508,7 +505,7 @@ class TrayThread(threading.Thread):
 
 
 def wait_for_tray_window(timeout: float = 3.0) -> int:
-    """Used by the second instance / --quit path."""
+    """供第二实例启动或 --quit 路径等待托盘窗口。"""
     import time as _time
     deadline = _time.monotonic() + timeout
     while _time.monotonic() < deadline:

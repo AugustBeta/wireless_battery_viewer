@@ -1,8 +1,8 @@
-"""Background reader service.
+"""后台读取服务。
 
-The UI never reads HID on the Tk thread.  A short-lived worker thread refreshes
-all targets and publishes an immutable snapshot through a thread-safe callback.
-The tray's SetTimer is the only idle timer; there is no polling/sleep loop.
+界面绝不在 Tk 线程中读取 HID。短生命周期的后台工作线程负责刷新所有目标，
+并通过线程安全的回调发布不可变快照。
+托盘的 SetTimer 是唯一的空闲定时器；这里没有轮询或 sleep 循环。
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ class BatteryRepository:
             self._debug_log(message)
 
     def request_refresh(self, reason: str = "timer") -> bool:
-        """Schedule one refresh.  Returns False if the service is stopped."""
+        """安排一次刷新；服务已停止时返回 False。"""
         with self._lock:
             if self._stopped:
                 return False
@@ -81,14 +81,14 @@ class BatteryRepository:
             try:
                 self.on_snapshot(snapshot)
             except Exception:
-                # A UI callback must never kill the reader thread.
+                # 界面回调绝不能让读取线程退出。
                 self._log("snapshot callback failed: " + traceback.format_exc(limit=2))
             if not more:
                 return
             with self._lock:
                 if self._stopped or self._busy:
-                    # A new request may have started its own worker while the
-                    # snapshot callback ran; let that one own the next pass.
+                    # 快照回调执行期间，新请求可能已经启动了自己的工作线程；
+                    # 让那个线程负责下一轮刷新。
                     return
                 self._busy = True
 
@@ -117,8 +117,7 @@ class BatteryRepository:
         for target in targets:
             if self._stopped:
                 break
-            # A known-unpaired receiver channel is not a device and must not
-            # produce a card or a tray icon.
+            # 已知未配对的接收器通道不是设备，不能生成卡片或托盘图标。
             if target.paired is False:
                 self._log(f"hidden unpaired channel: {target.name}")
                 continue
@@ -140,9 +139,8 @@ class BatteryRepository:
                     + traceback.format_exc(limit=3)
                 )
             reading.updated = datetime.now()
-            # When the pair list was unavailable we probe both channels.  A
-            # channel that did not answer and has no known pairing is not
-            # shown either.
+            # 当配对列表不可用时，我们探测两个通道。没有响应且没有已知
+            # 配对信息的通道同样不显示。
             if reading.status != "ok" and target.paired is not True:
                 self._log(f"hidden silent channel: {target.name} ({reading.status})")
                 continue

@@ -1,11 +1,11 @@
-"""User settings, shell shortcuts and desktop links.
+"""用户设置、Shell 快捷方式与桌面链接。
 
-No log file is ever opened here.  The only persistent files are:
+本模块绝不打开日志文件。唯一的持久化文件是：
 
 * %LOCALAPPDATA%\\WirelessBatteryViewer\\config.json
-* the optional Startup shortcut
-* the two desktop links, created only when the user asks for them (or when
-  ``my_devices.py --install`` is run explicitly)
+* 可选的启动文件夹快捷方式
+* 两个桌面链接；仅在用户主动请求时创建（或显式运行
+  ``my_devices.py --install`` 时创建）
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ MAX_INTERVAL = 1800
 
 
 # ---------------------------------------------------------------------------
-# Known folders
+# Windows 已知文件夹
 # ---------------------------------------------------------------------------
 
 FOLDERID_DESKTOP = "{B4BFCC3A-DB2C-424C-B029-7FE99A87C641}"
@@ -115,7 +115,7 @@ def pythonw_path() -> Path:
 
 
 # ---------------------------------------------------------------------------
-# Config JSON
+# 配置 JSON
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -142,8 +142,8 @@ class AppConfig:
                     continue
             config.calibrations = calibrations
         except Exception:
-            # A damaged config must never prevent startup and must not cause a
-            # log file or an automatic overwrite of user data.
+            # 损坏的配置既不能阻止程序启动，也不能导致写日志文件或自动
+            # 覆盖用户数据。
             pass
         return config
 
@@ -185,7 +185,7 @@ class AppConfig:
 
 
 # ---------------------------------------------------------------------------
-# ShellLinkW (pure ctypes COM)
+# ShellLinkW（纯 ctypes 实现 COM）
 # ---------------------------------------------------------------------------
 
 HRESULT = ctypes.c_long
@@ -212,11 +212,11 @@ def _release(interface: int) -> None:
 
 
 def _check_hresult(result: int, action: str) -> None:
-    # HRESULT is signed in ctypes; SUCCEEDED means >= 0.
+    # HRESULT 在 ctypes 中是有符号整数；>= 0 表示成功（SUCCEEDED）。
     if result < 0:
         raise OSError(
             result,
-            f"{action} failed (HRESULT 0x{result & 0xFFFFFFFF:08X})",
+            f"{action} 调用失败（HRESULT 0x{result & 0xFFFFFFFF:08X}）",
         )
 
 
@@ -251,8 +251,8 @@ def _co_initialize() -> None:
     if getattr(_COM_LOCAL, "initialized", False):
         return
     try:
-        result = ole32.CoInitializeEx(None, 0x2)  # COINIT_APARTMENTTHREADED
-        # S_OK / S_FALSE / RPC_E_CHANGED_MODE all mean COM can be used.
+        result = ole32.CoInitializeEx(None, 0x2)  # COINIT_APARTMENTTHREADED（单线程套间）
+        # S_OK / S_FALSE / RPC_E_CHANGED_MODE 都表示 COM 仍可使用。
         if result in (0, 1, 0x80010106):
             _COM_LOCAL.initialized = True
     except Exception:
@@ -375,7 +375,7 @@ def read_shortcut(shortcut_path: Path) -> ShortcutInfo:
 
 
 # ---------------------------------------------------------------------------
-# Startup folder integration
+# 启动文件夹集成
 # ---------------------------------------------------------------------------
 
 STARTUP_APPROVED_KEY = (
@@ -412,7 +412,7 @@ def _read_approved_disabled(name: str) -> bool:
             except FileNotFoundError:
                 return False
             if isinstance(data, bytes) and data:
-                # Explorer writes 0x02 for enabled and 0x03 for disabled.
+                # Explorer 写入 0x02 表示启用，0x03 表示禁用。
                 return data[0] not in (0x02, 0x06)
             if isinstance(data, int):
                 return data not in (2, 6)
@@ -494,7 +494,7 @@ def create_startup_shortcut() -> Path:
 
 
 def set_autostart_enabled(enabled: bool) -> AutostartState:
-    """Explicit user action only.  Never called automatically at startup."""
+    """仅供用户显式操作；启动时绝不自动调用。"""
     shortcut_path = startup_shortcut_path()
     if enabled:
         create_startup_shortcut()
@@ -505,7 +505,7 @@ def set_autostart_enabled(enabled: bool) -> AutostartState:
 
 
 def remove_startup_shortcut() -> None:
-    """Explicit uninstall action; not used by the tray's normal startup."""
+    """显式卸载操作；托盘正常启动时不会调用。"""
     shortcut_path = startup_shortcut_path()
     try:
         shortcut_path.unlink()
@@ -515,7 +515,7 @@ def remove_startup_shortcut() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Desktop links (symlink, junction / hardlink fallback)
+# 桌面链接（符号链接，失败时退 junction / 硬链接）
 # ---------------------------------------------------------------------------
 
 def _is_directory_link(path: Path) -> bool:
@@ -525,7 +525,7 @@ def _is_directory_link(path: Path) -> bool:
         is_junction = getattr(os.path, "isjunction", None)
         if is_junction and is_junction(path):
             return True
-        # Python's stat on a junction exposes FILE_ATTRIBUTE_REPARSE_POINT.
+        # Python 对 junction 调用 stat 时会带 FILE_ATTRIBUTE_REPARSE_POINT。
         return bool(path.stat().st_file_attributes & 0x400)
     except (OSError, AttributeError):
         return False
@@ -556,11 +556,10 @@ def _make_junction(link: Path, target: Path) -> None:
 
 
 def create_desktop_links() -> dict[str, Any]:
-    """Create the directory link and the launch-script link.
+    """创建目录链接和启动脚本链接。
 
-    The directory prefers a true symbolic link, then a junction.  The file
-    prefers a symbolic link, then a hardlink.  Existing non-link files are
-    never deleted or overwritten.
+    目录优先使用真正的符号链接，其次使用 junction；文件优先使用符号链接，
+    其次使用硬链接。已存在的普通文件绝不会被删除或覆盖。
     """
     desktop = desktop_folder()
     desktop.mkdir(parents=True, exist_ok=True)
@@ -615,7 +614,7 @@ def create_desktop_links() -> dict[str, Any]:
 
 
 def remove_desktop_links() -> None:
-    """Explicit uninstall helper; only removes links that point at us."""
+    """显式卸载辅助函数；只删除指向本项目的链接。"""
     desktop = desktop_folder()
     directory_link = desktop / DESKTOP_DIR_LINK_NAME
     file_link = desktop / DESKTOP_FILE_LINK_NAME

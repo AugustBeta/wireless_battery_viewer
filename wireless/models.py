@@ -1,4 +1,4 @@
-"""Small data model shared by discovery, the reader and both UIs."""
+"""设备发现、读取器以及两个界面共用的数据模型。"""
 
 from __future__ import annotations
 
@@ -146,7 +146,7 @@ class DeviceReading:
     percent: Optional[int] = None
     charging: Optional[bool] = None
     source: str = ""
-    status: str = "pending"  # pending | ok | offline | error
+    status: str = "pending"  # 状态：pending | ok | offline | error
     message: str = ""
     updated: Optional[datetime] = None
     detail: str = ""

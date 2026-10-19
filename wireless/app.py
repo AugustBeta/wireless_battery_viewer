@@ -1,4 +1,4 @@
-"""Application controller: Tk main thread, tray thread, worker callback."""
+"""应用控制器：协调 Tk 主线程、托盘线程和后台读取回调。"""
 
 from __future__ import annotations
 
@@ -51,7 +51,7 @@ class Application:
             debug_log=debug_log,
         )
 
-        # Imported late to avoid a config -> UI -> config import cycle.
+        # 延迟导入，避免 config -> UI -> config 的循环导入。
         from .ui import Panel
 
         self.panel = Panel(self)
@@ -74,7 +74,7 @@ class Application:
         with self._snapshot_lock:
             return self.latest_snapshot
 
-    # -- actions callable from the tray thread ----------------------------
+    # -- 可由托盘线程调用的操作 -------------------------------------------
     def request_refresh(self, reason: str = "manual") -> None:
         if self.quitting:
             return
@@ -91,7 +91,7 @@ class Application:
     def request_quit_from_tray(self) -> None:
         self.ui_queue.put(("quit", None))
 
-    # -- Tk actions --------------------------------------------------------
+    # -- Tk 线程操作 --------------------------------------------------------
     def show_panel(self) -> None:
         if self.quitting:
             return
@@ -128,8 +128,8 @@ class Application:
         self.repository.stop()
         self._tray_stop_started = True
         self.tray.stop()
-        # Settings are saved when they actually change.  Do not rewrite a
-        # possibly damaged config just because the app is exiting.
+        # 设置只在真正发生变化时保存。不要因为程序退出就重写可能已经损坏的
+        # 配置文件。
         self.root.after(40, self._wait_for_tray)
 
     def _wait_for_tray(self) -> None:

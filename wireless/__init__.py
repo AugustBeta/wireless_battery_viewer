@@ -1,3 +1,3 @@
-"""Wireless battery viewer package (standard library + ctypes only)."""
+"""无线外设电量查看工具包（仅标准库 + ctypes）。"""
 
 __version__ = "1.0.0"

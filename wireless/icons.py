@@ -1,8 +1,8 @@
-"""Notification-area icons with the battery percentage rendered as digits.
+"""通知区域图标：直接把电量百分比绘制成数字。
 
-We build a 32-bit top-down DIB and an AND mask, then turn it into an HICON via
-CreateIconIndirect.  This keeps the dependency list at ctypes only and makes
-the number sharp at the current DPI (SetProcessDPIAware is called by main).
+这里先创建 32 位自上而下的 DIB 和 AND 掩码，再通过 CreateIconIndirect
+生成 HICON。这样依赖仍然只有 ctypes，而且数字能在当前 DPI 下保持清晰
+（主程序会调用 SetProcessDPIAware）。
 """
 
 from __future__ import annotations
@@ -20,8 +20,7 @@ SM_CXSMICON = 49
 SM_CYSMICON = 50
 DEFAULT_ICON_SIZE = 32
 
-# 3x5 pixel font.  Digits are deliberately blocky so the number remains
-# readable at 16-32 physical pixels.
+# 3x5 像素字体。数字有意保持方块感，以便在 16–32 个物理像素下仍然清晰。
 FONT = {
     "0": ("111", "101", "101", "101", "111"),
     "1": ("010", "110", "010", "010", "111"),
@@ -125,7 +124,7 @@ def _alpha_round_rect(px: bytearray, size: int, radius: int, color: tuple[int, i
     radius = max(1, radius)
     for y in range(size):
         for x in range(size):
-            # Rounded rectangle coverage with a tiny 1px transparent border.
+            # 圆角矩形覆盖，四周保留 1 像素透明边。
             left = radius
             right = size - radius - 1
             top = radius
@@ -142,7 +141,7 @@ def _alpha_round_rect(px: bytearray, size: int, radius: int, color: tuple[int, i
             if not inside:
                 continue
             offset = (y * size + x) * 4
-            # BGRA, top-down.
+            # BGRA，自上而下存储。
             px[offset] = blue
             px[offset + 1] = green
             px[offset + 2] = red
@@ -175,7 +174,7 @@ def _draw_text(px: bytearray, size: int, text: str) -> None:
     height = 5 * scale
     start_x = (size - width) // 2
     start_y = (size - height) // 2
-    # A 1-pixel dark shadow keeps white digits readable on the yellow chip.
+    # 1 像素的深色阴影可以让白色数字在黄色底上仍然清晰。
     shadow = (start_x + max(1, scale // 2), start_y + max(1, scale // 2))
     for pass_index, (ox, oy, red, green, blue) in enumerate((
         (shadow[0], shadow[1], 0, 0, 0),
@@ -202,8 +201,8 @@ def _draw_text(px: bytearray, size: int, text: str) -> None:
                                 px[offset + 2] = red
                                 px[offset + 3] = 255
                             else:
-                                # Shadow only on colored background and only
-                                # where a digit would go.
+                                # 阴影只画在有色背景上，并且只在数字将要占据的
+                                # 位置绘制。
                                 if px[offset + 3] == 0:
                                     continue
                                 px[offset] = 0
@@ -225,7 +224,7 @@ def _make_hicon(text: str, color: tuple[int, int, int], size: int) -> int:
     bmi = BITMAPINFO()
     bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
     bmi.bmiHeader.biWidth = size
-    bmi.bmiHeader.biHeight = -size  # top-down
+    bmi.bmiHeader.biHeight = -size  # 负高度表示自上而下存储
     bmi.bmiHeader.biPlanes = 1
     bmi.bmiHeader.biBitCount = 32
     bmi.bmiHeader.biCompression = BI_RGB
@@ -243,7 +242,7 @@ def _make_hicon(text: str, color: tuple[int, int, int], size: int) -> int:
             raise ctypes.WinError(ctypes.get_last_error())
         ctypes.memmove(bits, bytes(px), len(px))
 
-        # AND mask: 1 = transparent.  Rows are padded to 16 bits.
+        # AND 掩码：1 表示透明；每行按 16 位对齐填充。
         stride = ((size + 15) // 16) * 2
         mask_data = bytearray(stride * size)
         for y in range(size):

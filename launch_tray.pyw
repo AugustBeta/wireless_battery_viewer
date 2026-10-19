@@ -1,8 +1,7 @@
-"""Double-click launcher for the desktop link.
+"""桌面链接使用的双击启动器。
 
-This file is linked (symlink, or hardlink as fallback) onto the Desktop; it is
-not copied there.  It uses pythonw.exe via the .pyw association, so no console
-window appears.
+该文件以符号链接（失败时使用硬链接）的方式放到桌面，不会被复制过去。
+通过 .pyw 文件关联由 pythonw.exe 运行，因此不会出现控制台窗口。
 """
 
 from __future__ import annotations

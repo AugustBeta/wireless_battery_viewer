@@ -1,15 +1,15 @@
-"""Windows HID layer built only on ctypes.
+"""仅通过 ctypes 实现的 Windows HID 底层封装。
 
-Everything here uses the ordinary Windows HID API (setupapi/hid/kernel32).
-No third-party modules are involved.
+本模块只使用 Windows 自带的 HID API（setupapi/hid/kernel32），
+不依赖任何第三方模块。
 
-Two rules are deliberately enforced in this module:
+模块内强制遵守两条规则：
 
-* A HID handle is never used for a blocking ReadFile at the same time as a
-  WriteFile/IOCTL on that same handle.  Vendor exchanges use a separate
-  FILE_FLAG_OVERLAPPED read handle and a separate write handle.
-* System-exclusive top-level collections are always opened with
-  dwDesiredAccess=0 for metadata and Feature Report access.
+* 同一个 HID 句柄绝不一边阻塞调用 ReadFile，一边并发执行
+  WriteFile/IOCTL。厂商命令使用独立的 FILE_FLAG_OVERLAPPED 读句柄，
+  并另外使用独立的写句柄。
+* 系统独占的顶层集合一律以 dwDesiredAccess=0 打开，用于读取元数据和
+  Feature Report。
 """
 
 from __future__ import annotations
@@ -61,17 +61,17 @@ class GUID(ctypes.Structure):
     def __init__(self, text: Optional[str] = None):
         super().__init__()
         if text:
-            # IMPORTANT: split only three times.  The last section itself
-            # still contains a dash (e.g. C000-000000000046).
+            # 注意：只能分割三次。最后一段本身仍包含连字符
+            # （例如 C000-000000000046）。
             parts = text.strip().strip("{}").split("-", 3)
             if len(parts) != 4:
-                raise ValueError("bad GUID: " + text)
+                raise ValueError("无效 GUID: " + text)
             self.Data1 = int(parts[0], 16)
             self.Data2 = int(parts[1], 16)
             self.Data3 = int(parts[2], 16)
             tail = bytes.fromhex(parts[3].replace("-", ""))
             if len(tail) != 8:
-                raise ValueError("bad GUID tail: " + text)
+                raise ValueError("无效的 GUID 尾段: " + text)
             for index, value in enumerate(tail):
                 self.Data4[index] = value
 
@@ -191,7 +191,7 @@ class OVERLAPPED(ctypes.Structure):
 
 
 # ---------------------------------------------------------------------------
-# Function prototypes
+# 函数原型
 # ---------------------------------------------------------------------------
 
 setupapi.SetupDiGetClassDevsW.restype = w.HANDLE
@@ -274,7 +274,7 @@ kernel32.CancelIoEx.argtypes = [w.HANDLE, ctypes.POINTER(OVERLAPPED)]
 
 
 # ---------------------------------------------------------------------------
-# Basic HID types
+# 基础 HID 类型
 # ---------------------------------------------------------------------------
 
 _PATH_VID = re.compile(r"vid_([0-9a-f]{4})", re.IGNORECASE)
@@ -308,7 +308,7 @@ class HidDeviceInfo:
 
     @property
     def interface_key(self) -> str:
-        """Stable identity for a HID collection inside one USB device."""
+        """USB 设备内某个 HID 集合的稳定标识。"""
         mi = f"mi_{self.interface_number:02X}" if self.interface_number is not None else "mi_00"
         col = f"col{self.collection_number:02X}" if self.collection_number is not None else "col00"
         return f"{self.vendor_id:04x}:{self.product_id:04x}:{mi}:{col}"
@@ -423,7 +423,7 @@ def _read_metadata(path: str) -> HidDeviceInfo:
 
 
 def enumerate_hid_devices() -> list[HidDeviceInfo]:
-    """Enumerate every present HID interface, including inaccessible ones."""
+    """枚举当前所有 HID 接口，包括无法打开的接口。"""
     guid = GUID(GUID_DEVINTERFACE_HID)
     flags = DIGCF_PRESENT | DIGCF_DEVICEINTERFACE
     info_set = setupapi.SetupDiGetClassDevsW(
@@ -455,7 +455,7 @@ def enumerate_hid_devices() -> list[HidDeviceInfo]:
             if required.value <= 0:
                 continue
             detail = ctypes.create_string_buffer(required.value)
-            # SP_DEVICE_INTERFACE_DETAIL_DATA_W.cbSize is 8 on 64-bit, 6 on x86.
+            # SP_DEVICE_INTERFACE_DETAIL_DATA_W.cbSize 在 64 位下为 8，x86 下为 6。
             ctypes.cast(detail, ctypes.POINTER(w.DWORD))[0] = (
                 8 if ctypes.sizeof(ctypes.c_void_p) == 8 else 6
             )
@@ -484,7 +484,7 @@ def enumerate_hid_devices() -> list[HidDeviceInfo]:
 
 
 # ---------------------------------------------------------------------------
-# Handles and overlapped reader
+# 句柄与重叠 I/O 读取器
 # ---------------------------------------------------------------------------
 
 def _open_handle(path: str, access: int, overlapped: bool) -> int:
@@ -505,7 +505,7 @@ def _open_handle(path: str, access: int, overlapped: bool) -> int:
 
 
 class open_hid:
-    """Context manager for an access-0 metadata/Feature handle."""
+    """以 dwDesiredAccess=0 打开元数据/Feature Report 句柄的上下文管理器。"""
 
     def __init__(self, path: str, access: int = 0):
         self.path = path
@@ -523,11 +523,10 @@ class open_hid:
 
 
 class OverlappedHidReader:
-    """Dedicated overlapped HID read handle.
+    """专用的重叠 I/O HID 读句柄。
 
-    It owns the only read handle for a vendor exchange.  No write ever happens
-    on this handle, which is the safety rule that avoids the known Windows HID
-    deadlock/crash.
+    厂商命令的读操作只使用这个句柄，绝不在该句柄上执行写操作；这是避免
+    Windows HID 已知死锁/崩溃问题的安全规则。
     """
 
     def __init__(self, path: str, report_len: int = 64):
@@ -561,9 +560,8 @@ class OverlappedHidReader:
             wait = kernel32.WaitForSingleObject(self.event, timeout_ms)
             if wait != WAIT_OBJECT_0:
                 kernel32.CancelIoEx(self.handle, ctypes.byref(ov))
-                # Wait for cancellation completion before letting ov go out of
-                # scope.  A timed-out overlapped read must never outlive its
-                # OVERLAPPED structure.
+                # 必须等待取消操作完成，再让 ov 离开作用域。超时的重叠
+                # 读取绝不能比它的 OVERLAPPED 结构活得更久。
                 kernel32.WaitForSingleObject(self.event, 1000)
                 return None
             if not kernel32.GetOverlappedResult(
@@ -619,7 +617,7 @@ class ExchangeResult:
 
 
 class HidTransport:
-    """Full-duplex vendor HID transport with isolated read/write handles."""
+    """全双工厂商 HID 传输，读、写使用彼此独立的句柄。"""
 
     def __init__(self, info: HidDeviceInfo, packet_size: Optional[int] = None,
                  debug=None):
@@ -631,7 +629,7 @@ class HidTransport:
         self.write_handle = INVALID_HANDLE_VALUE
         self.reader: Optional[OverlappedHidReader] = None
         try:
-            # The write handle is intentionally never used for ReadFile.
+            # 写句柄有意只用于写入，绝不用于 ReadFile。
             self.write_handle = _open_handle(info.path, GENERIC_WRITE, False)
             self.reader = OverlappedHidReader(
                 info.path, max(info.input_len or self.packet_size, 1)
@@ -642,7 +640,7 @@ class HidTransport:
 
     def _write(self, packet: bytes) -> None:
         if not packet:
-            raise ValueError("empty HID packet")
+            raise ValueError("HID 数据包不能为空")
         buf = (ctypes.c_ubyte * len(packet)).from_buffer_copy(packet)
         count = w.DWORD(0)
         if not kernel32.WriteFile(
@@ -650,7 +648,7 @@ class HidTransport:
         ):
             raise ctypes.WinError(ctypes.get_last_error())
         if count.value != len(packet):
-            raise OSError(0, f"short HID write ({count.value}/{len(packet)})")
+            raise OSError(0, f"HID 写入长度不足（{count.value}/{len(packet)}）")
 
     def send(
         self,
@@ -665,7 +663,7 @@ class HidTransport:
             packet = packet + b"\x00" * (self.packet_size - len(packet))
         elif len(packet) > self.packet_size:
             raise ValueError(
-                f"packet is {len(packet)} bytes, interface max is {self.packet_size}"
+                f"数据包长度为 {len(packet)} 字节，超过接口上限 {self.packet_size} 字节"
             )
         result = ExchangeResult(written=packet)
         if drain and self.reader:
@@ -712,7 +710,7 @@ class HidTransport:
                     break
                 matched_at = time.monotonic()
             if expected_prefix is None:
-                # Raw debug send: collect whatever arrives until timeout.
+                # 原始调试发送：持续收集收到的报告，直到超时。
                 continue
         return result
 
@@ -735,7 +733,7 @@ class HidTransport:
 
 
 # ---------------------------------------------------------------------------
-# Feature Reports
+# Feature Report（特性报告）
 # ---------------------------------------------------------------------------
 
 def get_feature_report(info: HidDeviceInfo, report_id: int,
@@ -774,7 +772,7 @@ def probe_feature_reports(info: HidDeviceInfo, report_ids: Iterable[int] = range
 
 
 # ---------------------------------------------------------------------------
-# Standard HID battery (Generic Device Controls 0x0006 / 0x0020)
+# 标准 HID 电量（Generic Device Controls 0x0006 / 0x0020）
 # ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
@@ -862,7 +860,7 @@ def _usage_value(preparsed, field: ValueField, report: bytes) -> Optional[int]:
 
 
 def read_standard_battery(info: HidDeviceInfo, input_timeout_ms: int = 1200) -> Optional[int]:
-    """Try the standard HID battery usage in Feature, then Input reports."""
+    """先尝试 Feature Report，再尝试 Input Report 中的标准 HID 电量字段。"""
     fields = find_battery_fields(info)
     if not fields:
         return None
@@ -886,8 +884,8 @@ def read_standard_battery(info: HidDeviceInfo, input_timeout_ms: int = 1200) -> 
                     if value is not None and 0 <= value <= 100:
                         return value
                 if input_fields:
-                    # A separate overlapped handle is used even here.  The
-                    # metadata handle above is never used for ReadFile.
+                    # 即使在这里也使用独立的 overlapped 读句柄。上面的
+                    # 元数据句柄绝不用于 ReadFile。
                     with OverlappedHidReader(
                         info.path, max(1, info.input_len or 64)
                     ) as reader:
@@ -913,7 +911,7 @@ def read_standard_battery(info: HidDeviceInfo, input_timeout_ms: int = 1200) -> 
 
 def listen_input(info: HidDeviceInfo, seconds: float = 2.0,
                  max_reports: int = 200) -> list[bytes]:
-    """Listen on an independent overlapped read handle for a few seconds."""
+    """在独立的 overlapped 读句柄上监听若干秒。"""
     reports: list[bytes] = []
     deadline = time.monotonic() + max(0.1, seconds)
     with OverlappedHidReader(

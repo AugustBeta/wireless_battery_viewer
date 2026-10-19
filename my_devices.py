@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Wireless peripheral battery viewer for Windows 10/11.
+"""Windows 10/11 无线外设电量查看工具。
 
-Examples:
+示例：
     python my_devices.py --once
-    python my_devices.py                 # panel + tray
-    python my_devices.py --tray          # tray only (used by the Startup shortcut)
-    python my_devices.py --debug-ui      # panel + full debug window
-    python my_devices.py --install       # startup shortcut + desktop links
-    python my_devices.py --quit          # ask a running tray to exit
+    python my_devices.py                 # 简洁面板 + 托盘
+    python my_devices.py --tray          # 只启动托盘（启动快捷方式使用）
+    python my_devices.py --debug-ui      # 简洁面板 + 完整调试窗口
+    python my_devices.py --install       # 启动快捷方式 + 桌面链接
+    python my_devices.py --quit          # 让正在运行的托盘退出
 """
 
 from __future__ import annotations
@@ -57,13 +57,13 @@ def debug_log(message: str) -> None:
 
 
 def ensure_debug_console() -> None:
-    """Only --debug may produce console output.  Never opens a log file."""
+    """只有 --debug 才产生控制台输出；绝不打开日志文件。"""
     if not DEBUG:
         return
     try:
         kernel32 = ctypes.windll.kernel32
-        # pythonw has no stdio at all.  Allocate a console only in that case;
-        # if stdout was redirected, keep the redirection intact.
+        # pythonw 完全没有标准输入输出。只在这种情况下分配控制台；
+        # 如果 stdout 已被重定向，则保留重定向。
         if sys.stdout is None or sys.stderr is None:
             if not kernel32.AllocConsole():
                 return
@@ -86,10 +86,10 @@ def ensure_debug_console() -> None:
 
 
 def set_dpi_awareness() -> None:
-    """Declare DPI awareness before Tk/icons so the tray digits stay sharp."""
+    """在创建 Tk/图标前声明 DPI 感知，保证托盘数字清晰。"""
     user32 = ctypes.windll.user32
     try:
-        # PER_MONITOR_AWARE_V2 = -4.  On Windows 10/11 this is the best mode.
+        # PER_MONITOR_AWARE_V2 = -4；在 Windows 10/11 上这是最佳模式。
         if user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)):
             return
     except Exception:
@@ -143,10 +143,10 @@ def release_single_instance() -> None:
 
 
 def instance_running() -> bool:
-    """Check the named mutex without disturbing the owning process."""
+    """检查命名互斥体是否存在，不干扰正在持有它的进程。"""
     KERNEL32.OpenMutexW.restype = ctypes.c_void_p
     KERNEL32.OpenMutexW.argtypes = [ctypes.c_uint, ctypes.c_int, ctypes.c_wchar_p]
-    handle = KERNEL32.OpenMutexW(0x00100000, False, MUTEX_NAME)  # SYNCHRONIZE
+    handle = KERNEL32.OpenMutexW(0x00100000, False, MUTEX_NAME)  # SYNCHRONIZE（同步访问）
     if not handle:
         return False
     KERNEL32.CloseHandle(handle)
@@ -202,7 +202,7 @@ def command_list_hid() -> int:
 
 def command_quit() -> int:
     if not request_quit_running_instance():
-        # Wait briefly for a just-started tray window.
+        # 短暂等待刚启动、托盘窗口尚未创建的实例。
         hwnd = wait_for_tray_window(2.0)
         if hwnd:
             request_quit_running_instance()

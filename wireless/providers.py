@@ -1,16 +1,15 @@
-"""Device discovery and battery protocol providers.
+"""设备发现与电量协议提供者。
 
-Priority for every target is:
+每个目标的读取优先级如下：
 
-    standard HID Battery Strength (0x0006/0x0020)
-    vendor protocol table (currently ASUS)
-    Logitech HID++ 2.0 (adapter provided for extension)
-    input-report fallback
-    manual calibration JSON
+    标准 HID Battery Strength（0x0006/0x0020）
+    厂商协议表（当前为 ASUS）
+    Logitech HID++ 2.0（预留扩展适配器）
+    Input Report 兜底
+    手动标定 JSON
 
-The current release intentionally only auto-discovers ASUS and devices that
-publish the standard HID battery usage.  Other brands can be added through the
-provider registry or the debug window's manual calibration page.
+当前版本有意只自动发现 ASUS 设备，以及对外暴露标准 HID 电量字段的设备。
+其他品牌可通过提供者注册表或调试窗口中的手动标定页面接入。
 """
 
 from __future__ import annotations
@@ -36,8 +35,8 @@ from .winhid import (
 ASUS_VID = 0x0B05
 LOGITECH_VID = 0x046D
 
-# Receiver PIDs as reported in the OMNI pairing list.  This is the same table
-# G-Helper uses to identify what is actually paired to the receiver.
+# OMNI 配对列表中的接收器 PID。该表与 G-Helper 使用的表一致，
+# 用于判断接收器实际配对了哪些设备。
 OMNI_KEYBOARDS = {
     0x1A85: "ROG Azoth (OMNI)",
     0x1B42: "ROG Azoth Extreme (OMNI)",
@@ -65,8 +64,7 @@ OMNI_MICE = {
 OMNI_KEYBOARD_COMMAND = (0x12, 0x01)
 OMNI_MOUSE_COMMAND = (0x12, 0x07)
 
-# Standalone ASUS wireless products.  Each spec is only used when the matching
-# HID interface is actually present.
+# 独立 ASUS 无线产品。只有匹配的 HID 接口实际存在时，才会使用对应定义。
 ASUS_STANDALONE_SPECS: list[AsusSpec] = [
     AsusSpec(
         key="scope96rx-wireless",
@@ -136,10 +134,9 @@ ASUS_STANDALONE_SPECS: list[AsusSpec] = [
     ),
 ]
 
-# Endgame / VAXEE / Nordic adapters.  Some of these devices publish the HID
-# battery usage, so the standard provider runs first automatically.  These
-# entries are discovery hooks for future vendor commands; they are not used to
-# create cards on their own.
+# Endgame / VAXEE / Nordic 适配入口。部分设备会暴露标准 HID 电量字段，
+# 因此标准提供者会自动优先执行。这里的条目只是未来厂商命令的发现钩子，
+# 不会单独创建设备卡片。
 VENDOR_PROTOCOL_NAMES = {
     0x3367: "Endgame Gear",
     0x3057: "VAXEE",
@@ -160,11 +157,10 @@ def _entry_pid(response: bytes, offset: int) -> Optional[int]:
 
 
 def read_omni_pairings(info: HidDeviceInfo, debug=None) -> list[int]:
-    """Read the receiver's pair list from the mi_02&col01 channel.
+    """从 mi_02&col01 通道读取接收器的配对列表。
 
-    The OMNI receiver answers ``01 A0 00 00`` with 4-byte records starting at
-    offset 5.  A failure is not fatal: the caller still probes both channels and
-    hides any channel that does not answer.
+    OMNI 接收器会响应 ``01 A0 00 00``，并从偏移 5 开始返回 4 字节记录。
+    查询失败不会中断流程：调用方仍会探测两个通道，并隐藏没有响应的通道。
     """
     pids: list[int] = []
     packet_size = max(5, int(info.output_len or 64))
@@ -215,7 +211,7 @@ def discover_targets(
     targets: list[DeviceTarget] = []
     used_interfaces: set[str] = set()
 
-    # --- ASUS OMNI receiver (1ACE) ----------------------------------------
+    # --- ASUS OMNI 接收器（1ACE） -----------------------------------------
     omni = [info for info in devices if info.vendor_id == ASUS_VID and info.product_id == 0x1ACE]
     if omni:
         col01 = _first(omni, lambda item: "mi_02&col01" in item.path.lower())
@@ -223,8 +219,8 @@ def discover_targets(
         col03 = _first(omni, lambda item: "mi_02&col03" in item.path.lower())
         pairings = read_omni_pairings(col01, debug=debug) if col01 else []
         if pairings:
-            # The receiver can briefly NAK the next channel command while it
-            # switches back from the pair-list interrogation.
+            # 接收器从配对列表查询切回普通命令时，可能在极短时间内对下一条
+            # 命令返回 NAK。
             time.sleep(0.12)
         keyboard_pid = next((pid for pid in pairings if pid in OMNI_KEYBOARDS), None)
         mouse_pid = next((pid for pid in pairings if pid in OMNI_MICE), None)
@@ -233,9 +229,8 @@ def discover_targets(
             pid not in OMNI_KEYBOARDS and pid not in OMNI_MICE
             for pid in pairings
         ))
-        # Only expose channels that are actually paired.  If the receiver did
-        # not answer the pair-list query, probe both channels and let the
-        # reader hide whichever one stays silent.
+        # 只暴露实际已配对的通道。如果接收器没有返回配对列表，则探测两个
+        # 通道，再由读取器隐藏始终没有响应的那一个。
         keyboard_present = (
             not pairings_known or keyboard_pid is not None or unknown_pairings
         )
@@ -302,7 +297,7 @@ def discover_targets(
             ))
             used_interfaces.add(col03.interface_key)
 
-    # --- Standalone ASUS wireless devices ---------------------------------
+    # --- 独立 ASUS 无线设备 -----------------------------------------------
     for spec in ASUS_STANDALONE_SPECS:
         info = _first(
             devices,
@@ -321,7 +316,7 @@ def discover_targets(
             ))
             used_interfaces.add(info.interface_key)
 
-    # --- Standard HID Battery Strength ------------------------------------
+    # --- 标准 HID Battery Strength ---------------------------------------
     for info in devices:
         if info.interface_key in used_interfaces:
             continue
@@ -347,7 +342,7 @@ def discover_targets(
         ))
         used_interfaces.add(info.interface_key)
 
-    # --- Manual calibration (last priority) --------------------------------
+    # --- 手动标定（最低优先级） -------------------------------------------
     for index, calibration in enumerate(calibrations):
         info = _first(
             devices,
@@ -375,7 +370,7 @@ def discover_targets(
 
 
 # ---------------------------------------------------------------------------
-# Readers
+# 读取器
 # ---------------------------------------------------------------------------
 
 def _offline(target: DeviceTarget, message: str, source: str = "") -> DeviceReading:
@@ -453,8 +448,8 @@ def _read_asus(target: DeviceTarget, debug=None, timeout_ms: int = 800) -> Devic
 
     response, error = _asus_query(target, spec.command, debug=debug, timeout_ms=timeout_ms)
     if response is None and "NAK" in error and target.paired is not False:
-        # The OMNI receiver occasionally NAKs the first command right after
-        # another channel was queried.  One quiet retry is cheap and fixes it.
+        # OMNI 接收器刚查询完另一个通道时，偶尔会对第一条命令返回 NAK。
+        # 安静地重试一次成本很低，通常即可恢复。
         time.sleep(0.18)
         response, error = _asus_query(
             target, spec.command, debug=debug, timeout_ms=timeout_ms
@@ -467,7 +462,7 @@ def _read_asus(target: DeviceTarget, debug=None, timeout_ms: int = 800) -> Devic
         return _error(target, "电池字节下标超出响应长度", spec.source)
 
     if spec.key == "cetra-speednova" and len(response) >= 9:
-        # Cetra SpeedNova reports left ear, right ear and charging case.
+        # Cetra SpeedNova 会分别报告左耳、右耳和充电盒电量。
         values = [response[6], response[7], response[8]]
         percent = _validate_percent(min(values))
         detail_extra = f"L={values[0]}% R={values[1]}% Case={values[2]}%"
@@ -558,10 +553,10 @@ def _read_manual(target: DeviceTarget, debug=None, timeout_ms: int = 800) -> Dev
 
 
 def read_target(target: DeviceTarget, debug=None, timeout_ms: int = 800) -> DeviceReading:
-    """Run the provider priority chain for one target."""
+    """对单个目标依次执行提供者优先级链。"""
     info = target.info
 
-    # 1. Standard HID battery usage.
+    # 1. 标准 HID 电量字段。
     try:
         if find_battery_fields(info):
             percent = read_standard_battery(info, input_timeout_ms=900)
@@ -577,21 +572,19 @@ def read_target(target: DeviceTarget, debug=None, timeout_ms: int = 800) -> Devi
     except Exception:
         pass
 
-    # 2. Vendor protocol table.  ASUS is fully implemented today.
+    # 2. 厂商协议表。ASUS 是当前完整实现的品牌。
     if target.asus is not None:
         return _read_asus(target, debug=debug, timeout_ms=timeout_ms)
 
-    # 3. Logitech HID++ 2.0 is intentionally an extension adapter.  It is only
-    #    invoked for explicitly registered Logitech targets, never for every
-    #    Logitech receiver interface in the system.
+    # 3. Logitech HID++ 2.0 是有意保留的扩展适配器，只对显式注册的
+    #    Logitech 目标调用，不会遍历系统中的每个罗技接收器接口。
     if target.provider == "logitech":
         result = read_logitech_hidpp(target, debug=debug)
         if result is not None:
             return result
 
-    # 4. Input-report fallback.  Standard battery fields already attempted
-    #    above; for unknown protocols we listen briefly and let the manual
-    #    calibration page turn a discovered pattern into a provider.
+    # 4. Input Report 兜底。标准电量字段已在上方尝试过；对于未知协议，
+    #    这里短暂监听，并允许手动标定页面把发现的报文模式保存为提供者。
     if target.provider == "input" and info.input_len:
         try:
             reports = listen_input(info, seconds=1.4, max_reports=64)
@@ -600,7 +593,7 @@ def read_target(target: DeviceTarget, debug=None, timeout_ms: int = 800) -> Devi
         except Exception:
             pass
 
-    # 5. Manual calibration.
+    # 5. 手动标定。
     if target.manual is not None:
         return _read_manual(target, debug=debug, timeout_ms=timeout_ms)
 
@@ -608,7 +601,7 @@ def read_target(target: DeviceTarget, debug=None, timeout_ms: int = 800) -> Devi
 
 
 # ---------------------------------------------------------------------------
-# Logitech HID++ 2.0 adapter (reserved extension point)
+# Logitech HID++ 2.0 适配器（预留扩展点）
 # ---------------------------------------------------------------------------
 
 HIDPP_FEATURE_BATTERY_VOLTAGE = 0x1000
@@ -646,7 +639,7 @@ def read_logitech_hidpp(target: DeviceTarget, debug=None) -> Optional[DeviceRead
         return None
     try:
         with HidTransport(info, packet_size=packet_size, debug=debug) as transport:
-            # 0xFF addresses the receiver; 0x01..0x06 addresses paired devices.
+            # 0xFF 用于寻址接收器；0x01..0x06 用于寻址已配对设备。
             for device_index in (0xFF, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06):
                 feature = _hidpp_get_feature(transport, device_index, HIDPP_FEATURE_BATTERY_LEVEL)
                 if feature:

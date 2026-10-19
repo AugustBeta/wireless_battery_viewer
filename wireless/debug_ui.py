@@ -1,14 +1,14 @@
-"""Complete debug/inspection window.
+"""完整的调试与检查窗口。
 
-Features:
-  * list every present HID device/interface
-  * read/dump Feature Reports and probe report IDs
-  * send a raw report using the isolated overlapped read transport
-  * listen to Input Reports
-  * save a manual calibration (Report ID / byte offset / scale) to JSON
+功能：
+  * 列出当前所有 HID 设备/接口
+  * 读取/转储 Feature Report，并探测 Report ID
+  * 使用隔离的 overlapped 读传输试发原始报告
+  * 监听 Input Report
+  * 将手动标定（Report ID / 电量字节下标 / 倍率）保存为 JSON
 
-All potentially blocking work happens on worker threads and comes back through
-a queue.Queue; no Tk call is made from a worker.
+所有可能阻塞的工作都在工作线程中执行，并通过 queue.Queue 返回结果；
+工作线程绝不直接调用 Tk。
 """
 
 from __future__ import annotations
@@ -59,7 +59,7 @@ def _parse_hex_bytes(text: str) -> bytes:
     values = []
     for part in parts:
         if len(part) > 2:
-            # Allow compact "1201" input.
+            # 允许输入紧凑格式，例如 "1201"。
             for index in range(0, len(part), 2):
                 values.append(int(part[index:index + 2], 16))
         else:
@@ -96,7 +96,7 @@ class DebugWindow:
         self.refresh_devices()
         self._pump()
 
-    # -- UI ----------------------------------------------------------------
+    # -- 界面 ---------------------------------------------------------------
     def _build(self) -> None:
         outer = tk.Frame(self.win, bg=BG)
         outer.pack(fill="both", expand=True, padx=16, pady=14)
@@ -387,7 +387,7 @@ class DebugWindow:
             justify="left", wraplength=540,
         ).grid(row=len(fields) + 2, column=0, columnspan=4, sticky="w", pady=(8, 0))
 
-    # -- background plumbing ----------------------------------------------
+    # -- 后台任务 -----------------------------------------------------------
     def _start(self, label: str, work: Callable, formatter: Callable) -> None:
         if self.busy:
             return
@@ -443,14 +443,14 @@ class DebugWindow:
 
     def _set_busy(self, busy: bool, label: str) -> None:
         self.busy_label.configure(text=label if busy else "")
-        # The busy guard in _start is authoritative; changing the pointer also
-        # gives immediate feedback without touching any worker-owned widget.
+        # _start 中的忙碌保护才是权威判断；切换鼠标指针只是为了给出即时
+        # 反馈，不触碰任何由工作线程持有的控件。
         if busy:
             self.win.configure(cursor="watch")
         else:
             self.win.configure(cursor="")
 
-    # -- device list -------------------------------------------------------
+    # -- 设备列表 -----------------------------------------------------------
     def refresh_devices(self) -> None:
         if self.busy:
             return
@@ -550,7 +550,7 @@ class DebugWindow:
             self.win.clipboard_append(self.selected.path)
             self._write("路径已复制到剪贴板")
 
-    # -- actions -----------------------------------------------------------
+    # -- 操作 ---------------------------------------------------------------
     def _require_selected(self) -> Optional[HidDeviceInfo]:
         if self.selected is None:
             messagebox.showinfo("完整调试", "请先在列表中选择一个 HID 接口。", parent=self.win)
@@ -702,7 +702,7 @@ class DebugWindow:
         self.app.repository.request_refresh("calibration")
         messagebox.showinfo("手动标定", "已保存，正在刷新设备列表。", parent=self.win)
 
-    # -- output ------------------------------------------------------------
+    # -- 输出 ---------------------------------------------------------------
     def _write(self, text: str) -> None:
         if self.closed:
             return
