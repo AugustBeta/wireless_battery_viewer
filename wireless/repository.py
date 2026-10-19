@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Callable, Optional
 
 from .config import AppConfig
-from .models import DeviceReading, DeviceTarget, Snapshot
+from .models import DeviceReading, Snapshot
 from .providers import discover_targets, read_target
 from .winhid import enumerate_hid_devices
 
@@ -35,7 +35,6 @@ class BatteryRepository:
         self._pending = False
         self._stopped = False
         self._last_snapshot: Optional[Snapshot] = None
-        self._last_targets: list[DeviceTarget] = []
 
     @property
     def last_snapshot(self) -> Optional[Snapshot]:
@@ -97,7 +96,6 @@ class BatteryRepository:
         started = datetime.now()
         errors: list[str] = []
         readings: list[DeviceReading] = []
-        reused_offline = False
         try:
             devices = enumerate_hid_devices()
             self._log(f"enumerated {len(devices)} HID interfaces")
@@ -111,15 +109,6 @@ class BatteryRepository:
                     f"{item.role}/{item.name}" for item in targets
                 )
             )
-            with self._lock:
-                if targets:
-                    self._last_targets = targets
-                elif self._last_targets:
-                    # Keep the cards/icons stable when a receiver is
-                    # unplugged, so the tray does not jump between one and
-                    # two icons.
-                    targets = list(self._last_targets)
-                    reused_offline = True
         except Exception as exc:
             errors.append(f"枚举设备失败：{exc}")
             self._log("enumeration failed: " + traceback.format_exc(limit=3))
@@ -128,15 +117,10 @@ class BatteryRepository:
         for target in targets:
             if self._stopped:
                 break
-            if reused_offline:
-                readings.append(DeviceReading(
-                    target=target,
-                    percent=None,
-                    source=target.source_hint,
-                    status="offline",
-                    message="未检测到设备",
-                    updated=datetime.now(),
-                ))
+            # A known-unpaired receiver channel is not a device and must not
+            # produce a card or a tray icon.
+            if target.paired is False:
+                self._log(f"hidden unpaired channel: {target.name}")
                 continue
             try:
                 reading = read_target(
@@ -156,14 +140,20 @@ class BatteryRepository:
                     + traceback.format_exc(limit=3)
                 )
             reading.updated = datetime.now()
+            # When the pair list was unavailable we probe both channels.  A
+            # channel that did not answer and has no known pairing is not
+            # shown either.
+            if reading.status != "ok" and target.paired is not True:
+                self._log(f"hidden silent channel: {target.name} ({reading.status})")
+                continue
             readings.append(reading)
             self._log(
                 f"{target.name}: status={reading.status} "
                 f"percent={reading.percent} source={reading.source}"
             )
 
-        if not targets:
-            errors.append("未发现支持的无线外设")
+        if not readings:
+            errors.append("未发现已连接的无线外设")
         snapshot = Snapshot(
             readings=readings,
             started=started,

@@ -163,28 +163,33 @@ def read_omni_pairings(info: HidDeviceInfo, debug=None) -> list[int]:
     """Read the receiver's pair list from the mi_02&col01 channel.
 
     The OMNI receiver answers ``01 A0 00 00`` with 4-byte records starting at
-    offset 5.  A failure is not fatal: we still show both receiver channels so
-    the user can wake the device and try again.
+    offset 5.  A failure is not fatal: the caller still probes both channels and
+    hides any channel that does not answer.
     """
     pids: list[int] = []
     packet_size = max(5, int(info.output_len or 64))
-    try:
-        with HidTransport(info, packet_size=packet_size, debug=debug) as transport:
-            packet = bytes([0x01, 0xA0, 0x00, 0x00])
-            result = transport.send(
-                packet,
-                timeout_ms=700,
-                expected_prefix=b"\x01\xA0\x00",
-            )
-            if result.matched:
-                response = result.matched
-                _debug_log(debug, "OMNI pair list: " + response[:24].hex(" ").upper())
-                for offset in range(5, min(len(response), 5 + 4 * 12), 4):
-                    pid = _entry_pid(response, offset)
-                    if pid:
-                        pids.append(pid)
-    except Exception as exc:
-        _debug_log(debug, f"OMNI pairing query failed: {exc}")
+    for attempt in range(2):
+        try:
+            with HidTransport(info, packet_size=packet_size, debug=debug) as transport:
+                packet = bytes([0x01, 0xA0, 0x00, 0x00])
+                result = transport.send(
+                    packet,
+                    timeout_ms=700,
+                    expected_prefix=b"\x01\xA0\x00",
+                )
+                if result.matched:
+                    response = result.matched
+                    _debug_log(debug, "OMNI pair list: " + response[:24].hex(" ").upper())
+                    for offset in range(5, min(len(response), 5 + 4 * 12), 4):
+                        pid = _entry_pid(response, offset)
+                        if pid:
+                            pids.append(pid)
+                    if pids:
+                        return pids
+        except Exception as exc:
+            _debug_log(debug, f"OMNI pairing query failed: {exc}")
+        if attempt == 0:
+            time.sleep(0.12)
     return pids
 
 
@@ -223,8 +228,22 @@ def discover_targets(
             time.sleep(0.12)
         keyboard_pid = next((pid for pid in pairings if pid in OMNI_KEYBOARDS), None)
         mouse_pid = next((pid for pid in pairings if pid in OMNI_MICE), None)
+        pairings_known = bool(pairings)
+        unknown_pairings = bool(pairings_known and any(
+            pid not in OMNI_KEYBOARDS and pid not in OMNI_MICE
+            for pid in pairings
+        ))
+        # Only expose channels that are actually paired.  If the receiver did
+        # not answer the pair-list query, probe both channels and let the
+        # reader hide whichever one stays silent.
+        keyboard_present = (
+            not pairings_known or keyboard_pid is not None or unknown_pairings
+        )
+        mouse_present = (
+            not pairings_known or mouse_pid is not None or unknown_pairings
+        )
 
-        if col02:
+        if col02 and keyboard_present:
             name = OMNI_KEYBOARDS.get(keyboard_pid or 0, "ROG OMNI 键盘")
             spec = AsusSpec(
                 key="omni-keyboard",
@@ -246,15 +265,14 @@ def discover_targets(
                 info=col02,
                 provider="asus",
                 asus=spec,
-                paired=(keyboard_pid is not None) if pairings else None,
+                paired=(
+                    True if keyboard_pid is not None
+                    else (None if not pairings_known or unknown_pairings else False)
+                ),
             ))
             used_interfaces.add(col02.interface_key)
 
-        if col03:
-            # Always expose the second receiver channel, even when the mouse is
-            # asleep or currently unpaired.  This is what gives the tray its
-            # stable pair of icons and lets the user see that the channel is
-            # waiting for a device.
+        if col03 and mouse_present:
             name = OMNI_MICE.get(mouse_pid or 0, "ROG OMNI 鼠标")
             spec = AsusSpec(
                 key="omni-mouse",
@@ -277,7 +295,10 @@ def discover_targets(
                 info=col03,
                 provider="asus",
                 asus=spec,
-                paired=(mouse_pid is not None) if pairings else None,
+                paired=(
+                    True if mouse_pid is not None
+                    else (None if not pairings_known or unknown_pairings else False)
+                ),
             ))
             used_interfaces.add(col03.interface_key)
 

@@ -447,17 +447,14 @@ class Panel:
             card.outer.destroy()
         self.cards = []
         self.card_keys = []
-        placeholders = [
-            ("keyboard", "正在查找键盘…"),
-            ("mouse", "正在查找鼠标…"),
-        ]
-        for index, (role, name) in enumerate(placeholders):
-            card = BatteryCard(self.cards_frame, self)
-            card.set_placeholder(role, name)
-            self._place_card(card, index)
-            self.cards.append(card)
-            self.card_keys.append("placeholder-" + role)
-        self._configure_card_grid(len(self.cards))
+        # Do not pre-create a mouse card: unpaired channels must never appear,
+        # even for the short time before the first background read finishes.
+        card = BatteryCard(self.cards_frame, self)
+        card.set_placeholder("other", "正在查找无线设备…")
+        self._place_card(card, 0, single=True)
+        self.cards.append(card)
+        self.card_keys.append("placeholder-loading")
+        self._configure_card_grid(1)
 
     def _configure_card_grid(self, count: int) -> None:
         for column in range(2):
@@ -466,7 +463,12 @@ class Panel:
         for row in range(rows):
             self.cards_frame.grid_rowconfigure(row, weight=1)
 
-    def _place_card(self, card: BatteryCard, index: int) -> None:
+    def _place_card(self, card: BatteryCard, index: int, single: bool = False) -> None:
+        if single:
+            card.outer.grid(
+                row=0, column=0, columnspan=2, sticky="n", padx=0, pady=(0, 8)
+            )
+            return
         row, column = divmod(index, 2)
         padx = (0, 8) if column == 0 else (8, 0)
         pady = (0, 8)
@@ -507,7 +509,7 @@ class Panel:
                 self.cards = []
                 for index, reading in enumerate(readings):
                     card = BatteryCard(self.cards_frame, self, reading)
-                    self._place_card(card, index)
+                    self._place_card(card, index, single=len(readings) == 1)
                     self.cards.append(card)
                 self.card_keys = keys
                 self._configure_card_grid(len(self.cards))
