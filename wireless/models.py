@@ -20,36 +20,6 @@ KIND_ORDER = {"keyboard": 0, "mouse": 1, "headset": 2, "other": 3}
 
 
 @dataclass(frozen=True)
-class AsusSpec:
-    key: str
-    pid: int
-    name: str
-    kind: str
-    report_id: int
-    command: tuple[int, int]
-    battery_offset: int
-    charging_offset: Optional[int] = None
-    charging_value: int = 1
-    path_contains: str = ""
-    usage_page: Optional[int] = None
-    usage: Optional[int] = None
-    packet_size: int = 64
-    charging_command: Optional[tuple[int, int]] = None
-    source: str = "ASUS 厂商协议"
-
-    def matches(self, info: HidDeviceInfo) -> bool:
-        if info.vendor_id != 0x0B05 or info.product_id != self.pid:
-            return False
-        if self.path_contains and self.path_contains.lower() not in info.path.lower():
-            return False
-        if self.usage_page is not None and info.usage_page != self.usage_page:
-            return False
-        if self.usage is not None and info.usage != self.usage:
-            return False
-        return info.accessible or not self.path_contains
-
-
-@dataclass(frozen=True)
 class ManualCalibration:
     name: str
     vendor_id: int
@@ -119,25 +89,14 @@ class DeviceTarget:
     kind: str
     info: HidDeviceInfo
     provider: str
-    asus: Optional[AsusSpec] = None
+    provider_data: Any = None
     manual: Optional[ManualCalibration] = None
     paired: Optional[bool] = None
+    source_hint: str = ""
 
     @property
     def role(self) -> str:
         return KIND_LABELS.get(self.kind, "外设")
-
-    @property
-    def source_hint(self) -> str:
-        if self.asus:
-            return self.asus.source
-        if self.provider == "standard":
-            return "标准 HID 电量字段"
-        if self.provider == "logitech":
-            return "Logitech HID++ 2.0"
-        if self.provider == "manual":
-            return "手动标定协议"
-        return "Input Report"
 
 
 @dataclass

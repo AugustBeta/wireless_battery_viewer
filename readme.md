@@ -229,7 +229,19 @@ my_devices.py              CLI / 单实例 / 启动器
 launch_tray.pyw            桌面链接目标（pythonw，不弹黑窗）
 wireless/
   winhid.py                SetupAPI / hid.dll / HID 读写 / Overlapped 读句柄
-  providers.py             ASUS OMNI、标准 HID 电量、HID++ 适配器、手动标定
+  providers/
+    __init__.py            提供者包入口
+    discovery.py           通用设备发现与读取优先级调度
+    registry.py            品牌提供者注册表
+    standard.py            标准 HID 电量字段
+    manual.py              手动标定
+    asus/
+      __init__.py          ASUS 品牌包
+      specs.py             ASUS 型号表与协议参数
+      provider.py          OMNI 配对发现、命令收发、电量解析
+    logitech/
+      __init__.py          Logitech 品牌包
+      provider.py          HID++ 2.0 适配器
   repository.py            后台刷新线程，向托盘/界面发布 Snapshot
   models.py                DeviceTarget / DeviceReading / Snapshot
   tray.py                  Win32 隐藏窗口 + Shell_NotifyIcon + SetTimer
@@ -245,12 +257,32 @@ wireless/
 每个设备的读取优先级：
 
 1. 标准 HID 电量字段：Generic Device Controls usage page `0x0006` / usage `0x0020`。
-2. 厂商协议表：当前完整实现 ASUS；也预留 Endgame `0x3367`、VAXEE `0x3057`、
-   Nordic `0x1915` 的发现钩子。
+2. 品牌提供者：ASUS 使用厂商协议；其它品牌各自在独立目录中实现。
 3. Logitech HID++ 2.0：已实现 `0x1000` / `0x1001` / `0x1004` 查询适配器，
-   只对显式注册的 Logitech 目标执行，避免把罗技接收器里的每个集合都误报成设备。
+   当前只作为显式注册的适配器保留，避免把罗技接收器里的每个集合都误报成设备。
 4. 监听 Input Report：标准字段读取失败时的兜底通道，可在调试窗口查看原始报文。
 5. 手动标定：最后兜底，把 Report ID、命令、电量字节下标、倍率写入 JSON。
+
+### 品牌目录约定
+
+每个品牌使用 `wireless/providers/` 下的独立文件夹：
+
+```text
+wireless/providers/
+  asus/          ASUS OMNI、独立无线键盘/耳机
+  logitech/      Logitech HID++ 2.0
+```
+
+新增品牌时：
+
+1. 新建 `wireless/providers/<brand>/`，包含 `__init__.py` 和 `provider.py`；
+2. 在 `provider.py` 中实现 `discover(devices, debug=None)` 和
+   `read(target, debug=None, timeout_ms=800)`；
+3. 在 `wireless/providers/registry.py` 的 `BRAND_PROVIDERS` 中注册。
+
+品牌模块只负责自己的设备；接口去重、标准 HID 兜底、手动标定和读取优先级由
+`wireless/providers/discovery.py` 统一处理。设备目标通过 `provider_data`
+保存品牌私有参数，不污染通用模型。
 
 ### ASUS OMNI（0B05:1ACE）
 
@@ -269,8 +301,8 @@ IN : 01 A0 00 01 00 7A 1B 02 04 ...
 - 接收器偶尔会在配对列表查询后对下一条命令返回 `FF AA`（NAK）；读取器会静默重试一次。
 - 如果鼠标未配对，该通道不会被发现，也不会显示卡片或托盘图标。
 
-型号映射及独立无线键盘/耳机也定义在 `wireless/providers.py` 的表中，新增型号只需加一条
-`AsusSpec`。
+型号映射及独立无线键盘/耳机定义在
+`wireless/providers/asus/specs.py`，新增型号只需加一条 `AsusSpec`。
 
 ## 开机自启与桌面链接
 
@@ -365,7 +397,8 @@ E:\Lang\Python\pythonw.exe "F:\code\wireless_battery_viewer\my_devices.py" --tra
 - 厂商命令可能被系统独占或设备固件拒绝（返回 `FF AA`）；面板会显示未连接，调试窗口会
   显示原始响应。
 - 非 ASUS 的自动发现目前只依赖标准 HID 电量字段。Logitech HID++ 适配器和手动标定已
-  实现，但不会把接收器里的未知集合自动变成卡片；新增品牌请扩展 `discover_targets`。
+  实现，但不会把接收器里的未知集合自动变成卡片；新增品牌请按品牌目录约定添加模块，
+  并在 `wireless/providers/registry.py` 中注册。
 
 ## 常见问题与卸载
 
