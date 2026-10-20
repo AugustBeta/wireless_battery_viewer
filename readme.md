@@ -12,12 +12,13 @@
 当前实测设备：
 
 ```text
-ROG Strix Scope II 96 RX (OMNI)：66%（ASUS OMNI 厂商协议）
+ROG Strix Scope II 96 RX (OMNI)：62%（ASUS OMNI 厂商协议）
+PRO X Wireless Gaming Headset：95%（Logitech G PRO 厂商协议）
 ```
 
 > 这台机器上的 ROG OMNI 接收器同时提供键盘和鼠标两个 HID 通道，但当前只配对了键盘。
 > 未连接的通道不会创建卡片，也不会创建托盘图标；以后配对鼠标后，鼠标卡片和第二个
-> 图标会自动出现。
+> 图标会自动出现。Logitech G PRO 耳机通过独立的 64 字节厂商接口读取电量。
 
 ## 快速开始
 
@@ -241,7 +242,7 @@ wireless/
       provider.py          OMNI 配对发现、命令收发、电量解析
     logitech/
       __init__.py          Logitech 品牌包
-      provider.py          HID++ 2.0 适配器
+      provider.py          G PRO 电压查询、HID++ 2.0 适配器
   repository.py            后台刷新线程，向托盘/界面发布 Snapshot
   models.py                DeviceTarget / DeviceReading / Snapshot
   tray.py                  Win32 隐藏窗口 + Shell_NotifyIcon + SetTimer
@@ -257,9 +258,10 @@ wireless/
 每个设备的读取优先级：
 
 1. 标准 HID 电量字段：Generic Device Controls usage page `0x0006` / usage `0x0020`。
-2. 品牌提供者：ASUS 使用厂商协议；其它品牌各自在独立目录中实现。
+2. 品牌提供者：ASUS 使用 OMNI 厂商协议；Logitech G PRO 系列耳机使用
+   电池电压帧；其它品牌各自在独立目录中实现。
 3. Logitech HID++ 2.0：已实现 `0x1000` / `0x1001` / `0x1004` 查询适配器，
-   当前只作为显式注册的适配器保留，避免把罗技接收器里的每个集合都误报成设备。
+   用于后续支持罗技鼠标和键盘；G PRO 耳机不使用 HID++ 电量特性。
 4. 监听 Input Report：标准字段读取失败时的兜底通道，可在调试窗口查看原始报文。
 5. 手动标定：最后兜底，把 Report ID、命令、电量字节下标、倍率写入 JSON。
 
@@ -270,7 +272,7 @@ wireless/
 ```text
 wireless/providers/
   asus/          ASUS OMNI、独立无线键盘/耳机
-  logitech/      Logitech HID++ 2.0
+  logitech/      Logitech G PRO 电量、HID++ 2.0
 ```
 
 新增品牌时：
@@ -303,6 +305,27 @@ IN : 01 A0 00 01 00 7A 1B 02 04 ...
 
 型号映射及独立无线键盘/耳机定义在
 `wireless/providers/asus/specs.py`，新增型号只需加一条 `AsusSpec`。
+
+### Logitech G PRO 无线耳机（046D:0AA7 / 0AAA / 0ABA）
+
+G PRO 系列耳机不走 HID++ 2.0 电量特性，而是在 `0xFF43/0x0202` 接口上
+用 20 字节长报告查询电池电压：
+
+```text
+OUT: 11 FF 06 0D 00 ...（共 20 字节）
+IN : 11 FF 06 0D 0F D6 01 ...
+                 ^^^^^ ^^
+                 电压  状态（0x03 = 充电中）
+```
+
+- 电压按大端读取响应 `[4]`、`[5]`，当前示例为 `0x0FD6`，即 `4054 mV`。
+- 电量百分比由 HeadsetControl 对 G PRO 系列的电压拟合曲线换算，结果限制在
+  0–100；电压超出 `2500–5000 mV` 时视为无效响应。
+- 接收器存在但耳机休眠时，查询会超时；面板显示「耳机未连接或已休眠」。
+- `0x0AF7`（PRO X 2 LIGHTSPEED）使用不同的帧格式，当前不套用这套逻辑。
+
+更完整的接口排查、HID++ 排除过程和电压拟合说明见
+[`wireless/providers/logitech/README.md`](wireless/providers/logitech/README.md)。
 
 ## 开机自启与桌面链接
 
@@ -396,9 +419,9 @@ E:\Lang\Python\pythonw.exe "F:\code\wireless_battery_viewer\my_devices.py" --tra
   提示没有可读 Feature Report。
 - 厂商命令可能被系统独占或设备固件拒绝（返回 `FF AA`）；面板会显示未连接，调试窗口会
   显示原始响应。
-- 非 ASUS 的自动发现目前只依赖标准 HID 电量字段。Logitech HID++ 适配器和手动标定已
-  实现，但不会把接收器里的未知集合自动变成卡片；新增品牌请按品牌目录约定添加模块，
-  并在 `wireless/providers/registry.py` 中注册。
+- 当前自动发现支持 ASUS OMNI 和 Logitech G PRO 系列耳机；其它罗技设备仍只依赖
+  标准 HID 电量字段，HID++ 适配器尚未接入自动发现。新增品牌请按品牌目录约定添加
+  模块，并在 `wireless/providers/registry.py` 中注册。
 
 ## 常见问题与卸载
 
@@ -412,9 +435,9 @@ E:\Lang\Python\pythonw.exe "F:\code\wireless_battery_viewer\my_devices.py" --tra
 
 **只看到一个托盘图标**
 
-- 正常：托盘图标数量等于当前已连接设备数。当前只配对了键盘，所以只有一个图标。
+- 正常：托盘图标数量等于当前已连接且能读到的设备数。当前键盘和 G PRO 耳机各有一个。
 - 运行 `python my_devices.py --once` 可以确认当前识别到几台设备。
-- 如果键盘和鼠标都已配对，但仍只看到一个图标，点击任务栏的 `^` 展开通知区域，
+- 如果键盘和耳机都已连接，但仍只看到一个图标，点击任务栏的 `^` 展开通知区域，
   或到「设置 → 个性化 → 任务栏 → 其他系统托盘图标」中固定。
 - 未配对的接收器通道不会创建图标。
 

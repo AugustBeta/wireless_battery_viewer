@@ -35,7 +35,7 @@ def discover_targets(
     targets: list[DeviceTarget] = []
     used_interfaces: set[str] = set()
 
-    # 1. 品牌提供者。当前注册 ASUS 和 Logitech（Logitech 暂不自动发现）。
+    # 1. 品牌提供者。当前注册 ASUS OMNI 和 Logitech G PRO 耳机。
     for brand in BRAND_PROVIDERS:
         try:
             found = brand.discover(devices, debug=debug)
