@@ -2,7 +2,8 @@
 
 目录约定：
 - ``asus/``       ASUS OMNI/独立无线设备的发现与读取
-- ``logitech/``   Logitech HID++ 2.0 适配器
+- ``logitech/``   Logitech G PRO 厂商协议与 HID++ 2.0 适配器
+- ``razer/``      Razer 厂商 Feature Report 电量
 - ``standard.py`` 标准 HID 电量字段
 - ``manual.py``   手动标定
 - ``registry.py`` 品牌注册表

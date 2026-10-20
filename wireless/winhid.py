@@ -755,6 +755,38 @@ def get_feature_report(info: HidDeviceInfo, report_id: int,
         return bytes(buf)
 
 
+def exchange_feature_report(
+    info: HidDeviceInfo,
+    request: bytes,
+    delay_ms: int = 15,
+    access: int = 0,
+) -> Optional[bytes]:
+    """在同一个句柄上先 SetFeature 再 GetFeature。
+
+    厂商命令经常要求“写入请求后立刻读回”，分两次打开句柄可能丢失
+    设备准备好的响应，因此这里复用同一个句柄。
+    """
+    size = len(request)
+    if size <= 0 or size > int(info.feature_len or size):
+        return None
+    with open_hid(info.path, access) as handle:
+        req = (ctypes.c_ubyte * size).from_buffer_copy(request)
+        if not hid.HidD_SetFeature(handle, req, size):
+            error = ctypes.get_last_error()
+            if error:
+                raise OSError(error, ctypes.FormatError(error))
+            return None
+        if delay_ms > 0:
+            time.sleep(delay_ms / 1000.0)
+        resp = (ctypes.c_ubyte * size)()
+        if not hid.HidD_GetFeature(handle, resp, size):
+            error = ctypes.get_last_error()
+            if error:
+                raise OSError(error, ctypes.FormatError(error))
+            return None
+        return bytes(resp)
+
+
 def probe_feature_reports(info: HidDeviceInfo, report_ids: Iterable[int] = range(256)) -> dict[int, bytes]:
     if not info.feature_len:
         return {}

@@ -18,7 +18,7 @@ from typing import Any, Optional
 
 from ..models import DeviceReading, DeviceTarget
 from ..winhid import HidDeviceInfo
-from . import asus, logitech
+from . import asus, logitech, razer
 
 
 @dataclass(frozen=True)
@@ -44,6 +44,7 @@ class BrandProvider:
 BRAND_PROVIDERS: tuple[BrandProvider, ...] = (
     BrandProvider("asus", "ASUS", asus),
     BrandProvider("logitech", "Logitech", logitech),
+    BrandProvider("razer", "Razer", razer),
 )
 
 _BY_KEY = {brand.key: brand for brand in BRAND_PROVIDERS}

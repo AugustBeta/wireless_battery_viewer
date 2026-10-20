@@ -13,12 +13,13 @@
 
 ```text
 ROG Strix Scope II 96 RX (OMNI)：62%（ASUS OMNI 厂商协议）
-PRO X Wireless Gaming Headset：95%（Logitech G PRO 厂商协议）
+Razer Viper V3 Pro：44%（Razer 厂商协议，充电中）
 ```
 
 > 这台机器上的 ROG OMNI 接收器同时提供键盘和鼠标两个 HID 通道，但当前只配对了键盘。
 > 未连接的通道不会创建卡片，也不会创建托盘图标；以后配对鼠标后，鼠标卡片和第二个
-> 图标会自动出现。Logitech G PRO 耳机通过独立的 64 字节厂商接口读取电量。
+> 图标会自动出现。Logitech G PRO 耳机通过独立的 64 字节厂商接口读取电量，Razer
+> 鼠标通过 90/91 字节 Feature Report 读取；设备休眠时对应卡片暂时隐藏。
 
 ## 快速开始
 
@@ -243,6 +244,10 @@ wireless/
     logitech/
       __init__.py          Logitech 品牌包
       provider.py          G PRO 电压查询、HID++ 2.0 适配器
+    razer/
+      __init__.py          Razer 品牌包
+      provider.py          厂商 Feature Report 电量查询
+      README.md            协议布局、CRC、响应解析与实测记录
   repository.py            后台刷新线程，向托盘/界面发布 Snapshot
   models.py                DeviceTarget / DeviceReading / Snapshot
   tray.py                  Win32 隐藏窗口 + Shell_NotifyIcon + SetTimer
@@ -259,7 +264,8 @@ wireless/
 
 1. 标准 HID 电量字段：Generic Device Controls usage page `0x0006` / usage `0x0020`。
 2. 品牌提供者：ASUS 使用 OMNI 厂商协议；Logitech G PRO 系列耳机使用
-   电池电压帧；其它品牌各自在独立目录中实现。
+   电池电压帧；Razer 使用 90/91 字节 Feature Report；其它品牌各自在
+   独立目录中实现。
 3. Logitech HID++ 2.0：已实现 `0x1000` / `0x1001` / `0x1004` 查询适配器，
    用于后续支持罗技鼠标和键盘；G PRO 耳机不使用 HID++ 电量特性。
 4. 监听 Input Report：标准字段读取失败时的兜底通道，可在调试窗口查看原始报文。
@@ -273,6 +279,7 @@ wireless/
 wireless/providers/
   asus/          ASUS OMNI、独立无线键盘/耳机
   logitech/      Logitech G PRO 电量、HID++ 2.0
+  razer/         Razer 厂商 Feature Report 电量
 ```
 
 新增品牌时：
@@ -326,6 +333,43 @@ IN : 11 FF 06 0D 0F D6 01 ...
 
 更完整的接口排查、HID++ 排除过程和电压拟合说明见
 [`wireless/providers/logitech/README.md`](wireless/providers/logitech/README.md)。
+
+### Razer 无线鼠标（1532:00C1 等）
+
+雷蛇接收器使用 90/91 字节的 Feature Report。91 字节报告前面多一个 Windows
+Report ID 字节，协议整体偏移 1：
+
+```text
+[1]      事务号（0x1F / 0x3F / 0xFF）
+[5]      参数长度 = 0x02
+[6]      命令类 = 0x07
+[7]      命令：0x80 电量，0x84 充电状态
+[88]     CRC = XOR [2..87]
+[89]     0
+```
+
+响应：
+
+```text
+[0]      状态，0x02 表示成功
+[1]      事务号
+[6]      命令类，应为 0x07
+[7]      命令，应为 0x80 或 0x84
+[9]      原始电量 0–255 / 充电标志（1 = 充电中）
+```
+
+电量换算：
+
+```text
+percent = round(raw / 255 * 100)
+```
+
+雷蛇固件把 `0` 当作异常值，界面最低显示 `1%`。本机 Viper V3 Pro 实测
+`raw=0x5A` 为 `35%`，充电查询 `raw=0` 表示未充电。接收器可能回显上一次的
+事务号，因此只校验状态、命令类和命令；原始电量为 `0` 时按无效响应处理。
+
+报告构造、CRC、PID 归一化和完整实测记录见
+[`wireless/providers/razer/README.md`](wireless/providers/razer/README.md)。
 
 ## 开机自启与桌面链接
 
@@ -400,10 +444,10 @@ E:\Lang\Python\pythonw.exe "F:\code\wireless_battery_viewer\my_devices.py" --tra
 
 ## 验收结果（本机实测）
 
-- `python my_devices.py --once`：只输出已连接的键盘，电量 `66%`；未配对的鼠标通道不显示。
-- 面板只显示一张键盘卡片（单卡片居中）；键盘卡绿色，阈值代码为 ≥60 绿、30–59 黄、<30 红。
-- 托盘只注册一个设备图标（`Shell_NotifyIconGetRect` 对 uid 1 成功，uid 2 失败）；
-  键盘图标实测显示数字 `66`。
+- `python my_devices.py --once`：输出键盘 `62%`、Razer Viper V3 Pro `36%`；
+  耳机开机时再增加一行 G PRO 电量。
+- 面板按设备数量显示卡片；键盘卡为绿色，阈值代码为 ≥60 绿、30–59 黄、<30 红。
+- 托盘按已连接设备注册图标；实测键盘和 Razer 鼠标各一个，数字与面板一致。
 - 右键托盘回调使隐藏面板 `IsWindowVisible=True`；左键回调触发一次 `refresh requested:
   tray-left-click`。
 - 启动文件夹快捷方式被 `Win32_StartupCommand` 识别为 `电量托盘`，位置 `Startup`。
@@ -419,9 +463,12 @@ E:\Lang\Python\pythonw.exe "F:\code\wireless_battery_viewer\my_devices.py" --tra
   提示没有可读 Feature Report。
 - 厂商命令可能被系统独占或设备固件拒绝（返回 `FF AA`）；面板会显示未连接，调试窗口会
   显示原始响应。
-- 当前自动发现支持 ASUS OMNI 和 Logitech G PRO 系列耳机；其它罗技设备仍只依赖
-  标准 HID 电量字段，HID++ 适配器尚未接入自动发现。新增品牌请按品牌目录约定添加
-  模块，并在 `wireless/providers/registry.py` 中注册。
+- 当前自动发现支持 ASUS OMNI、Logitech G PRO 系列耳机和带雷蛇厂商 Feature
+  Report 的 Razer 设备；其它罗技设备仍只依赖标准 HID 电量字段，HID++ 适配器
+  尚未接入自动发现。新增品牌请按品牌目录约定添加模块，并在
+  `wireless/providers/registry.py` 中注册。
+- Razer 目前只在 `FeatureReportByteLength >= 90` 的接口上尝试；已验证
+  Viper V3 Pro（`1532:00C1`）。设备休眠时会暂时隐藏，唤醒后下一次刷新重新出现。
 
 ## 常见问题与卸载
 
@@ -435,7 +482,8 @@ E:\Lang\Python\pythonw.exe "F:\code\wireless_battery_viewer\my_devices.py" --tra
 
 **只看到一个托盘图标**
 
-- 正常：托盘图标数量等于当前已连接且能读到的设备数。当前键盘和 G PRO 耳机各有一个。
+- 正常：托盘图标数量等于当前已连接且能读到的设备数。键盘、Razer 鼠标和
+  G PRO 耳机各有一个。
 - 运行 `python my_devices.py --once` 可以确认当前识别到几台设备。
 - 如果键盘和耳机都已连接，但仍只看到一个图标，点击任务栏的 `^` 展开通知区域，
   或到「设置 → 个性化 → 任务栏 → 其他系统托盘图标」中固定。
