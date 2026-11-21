@@ -17,6 +17,7 @@ from __future__ import annotations
 import ctypes
 import threading
 import traceback
+import uuid
 from ctypes import wintypes as w
 from dataclasses import dataclass
 from datetime import datetime
@@ -32,6 +33,10 @@ kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
 TRAY_WINDOW_CLASS = "WirelessBatteryViewer.TrayWindow.v1"
 TRAY_WINDOW_TITLE = "WirelessBatteryViewer"
+# 图标身份使用固定 GUID，而不是“窗口句柄 + uID”。这样即使上一次进程
+# 异常退出留下通知图标，新进程也能按同一身份把它替换掉，而不是并排出现
+# 两个数字不同的图标。
+TRAY_GUID_NAMESPACE = uuid.UUID("6f0d4e2a-5b1c-4f6e-9a73-2c8d1e4b7a90")
 
 WM_CLOSE = 0x0010
 WM_DESTROY = 0x0002
@@ -59,6 +64,7 @@ NIF_ICON = 0x00000002
 NIF_TIP = 0x00000004
 NIF_STATE = 0x00000008
 NIF_INFO = 0x00000010
+NIF_GUID = 0x00000020
 NIF_SHOWTIP = 0x00000080
 NIM_ADD = 0x00000000
 NIM_MODIFY = 0x00000001
@@ -192,6 +198,7 @@ kernel32.GetModuleHandleW.argtypes = [w.LPCWSTR]
 
 @dataclass
 class TraySlot:
+    guid: str
     uid: int
     title: str
     tip: str
@@ -205,6 +212,11 @@ class TrayDisplayItem:
     percent: Optional[int]
     status: str
     timestamp: datetime
+    key: str = "placeholder"
+
+
+def _tray_guid(key: str) -> str:
+    return str(uuid.uuid5(TRAY_GUID_NAMESPACE, "tray:" + key))
 
 
 def snapshot_to_items(snapshot: Optional[Snapshot]) -> list[TrayDisplayItem]:
@@ -219,17 +231,20 @@ def snapshot_to_items(snapshot: Optional[Snapshot]) -> list[TrayDisplayItem]:
             percent=reading.percent if reading.status == "ok" else None,
             status=reading.status,
             timestamp=reading.updated or snapshot.finished,
+            key=reading.target.key,
         )
         for reading in snapshot.readings
     ]
 
 
-def _make_nid(hwnd: int, uid: int) -> NOTIFYICONDATAW:
+def _make_nid(hwnd: int, uid: int, guid: Optional[str] = None) -> NOTIFYICONDATAW:
     data = NOTIFYICONDATAW()
     data.cbSize = ctypes.sizeof(NOTIFYICONDATAW)
     data.hWnd = hwnd
     data.uID = uid
     data.uCallbackMessage = WM_TRAY_CALLBACK
+    if guid:
+        data.guidItem = GUID(guid)
     return data
 
 
@@ -251,14 +266,17 @@ def request_quit_running_instance() -> bool:
     return bool(user32.PostMessageW(hwnd, WM_CLOSE, 0, 0))
 
 
-def tray_icon_rect(uid: int) -> Optional[tuple[int, int, int, int]]:
+def tray_icon_rect(uid: int | str) -> Optional[tuple[int, int, int, int]]:
     hwnd = find_tray_window()
     if not hwnd:
         return None
     identifier = NOTIFYICONIDENTIFIER()
     identifier.cbSize = ctypes.sizeof(NOTIFYICONIDENTIFIER)
     identifier.hWnd = hwnd
-    identifier.uID = uid
+    if isinstance(uid, str):
+        identifier.guidItem = GUID(uid)
+    else:
+        identifier.uID = uid
     rect = RECT()
     result = shell32.Shell_NotifyIconGetRect(
         ctypes.byref(identifier), ctypes.byref(rect)
@@ -284,7 +302,7 @@ class TrayThread(threading.Thread):
         self.startup_error: Optional[BaseException] = None
         self._wndproc_ref = None
         self._icons = TrayIconFactory()
-        self._slots: dict[int, TraySlot] = {}
+        self._slots: dict[str, TraySlot] = {}
         self._interval = controller.config.refresh_seconds
         self._class_atom = 0
         self._hinstance = kernel32.GetModuleHandleW(None)
@@ -436,67 +454,81 @@ class TrayThread(threading.Thread):
             return
         snapshot = self.controller.latest_snapshot
         items = snapshot_to_items(snapshot)
-        desired = min(len(items), 8)
-        for index in range(desired):
-            item = items[index]
+        desired = [(_tray_guid(item.key), item) for item in items[:8]]
+        desired_guids = {guid for guid, _ in desired}
+        for index, (guid, item) in enumerate(desired):
             uid = index + 1
             icon = self._icons.get(item.percent, item.status)
             percent_text = f"{item.percent}%" if item.percent is not None else "--"
             timestamp = item.timestamp.strftime("%H:%M:%S") if item.timestamp else "--:--:--"
             tip = f"{item.name}：{percent_text}（{timestamp}）"
-            existing = self._slots.get(uid)
+            existing = self._slots.get(guid)
             if existing is None:
-                data = _make_nid(self.hwnd, uid)
-                data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP
-                data.hIcon = icon
-                data.szTip = tip[:127]
-                if not shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(data)):
-                    self._log(f"NIM_ADD failed for uid={uid}")
-                    continue
-                data.uVersion = NOTIFYICON_VERSION_4
-                shell32.Shell_NotifyIconW(NIM_SETVERSION, ctypes.byref(data))
-                self._slots[uid] = TraySlot(
-                    uid=uid, title=item.name, tip=tip, icon=icon,
-                    percent=item.percent,
-                )
-                self._log(f"tray icon added uid={uid} tip={tip}")
-            else:
-                data = _make_nid(self.hwnd, uid)
-                data.uFlags = NIF_ICON | NIF_TIP | NIF_SHOWTIP
-                data.hIcon = icon
-                data.szTip = tip[:127]
-                if not shell32.Shell_NotifyIconW(NIM_MODIFY, ctypes.byref(data)):
-                    self._log(f"NIM_MODIFY failed for uid={uid}; re-adding")
-                    # 图标可能在程序不知情时被删除（例如 Explorer 重启）。
-                    # NIM_MODIFY 无法恢复它，NIM_ADD 是唯一正确的补救方式。
-                    self._slots.pop(uid, None)
-                    data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP
-                    if shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(data)):
-                        data.uVersion = NOTIFYICON_VERSION_4
-                        shell32.Shell_NotifyIconW(NIM_SETVERSION, ctypes.byref(data))
-                        self._slots[uid] = TraySlot(
-                            uid=uid, title=item.name, tip=tip, icon=icon,
-                            percent=item.percent,
-                        )
-                else:
-                    existing.title = item.name
-                    existing.tip = tip
-                    existing.icon = icon
-                    existing.percent = item.percent
-        for uid in list(self._slots):
-            if uid > desired:
-                self._delete_icon(uid)
+                self._add_icon(guid, uid, item, icon, tip)
+                continue
+            data = _make_nid(self.hwnd, uid, guid)
+            data.uFlags = NIF_ICON | NIF_TIP | NIF_SHOWTIP | NIF_GUID
+            data.hIcon = icon
+            data.szTip = tip[:127]
+            if not shell32.Shell_NotifyIconW(NIM_MODIFY, ctypes.byref(data)):
+                self._log(f"NIM_MODIFY failed for guid={guid}; re-adding")
+                # 图标可能在程序不知情时被删除（例如 Explorer 重启）。
+                self._slots.pop(guid, None)
+                self._add_icon(guid, uid, item, icon, tip)
+                continue
+            existing.uid = uid
+            existing.title = item.name
+            existing.tip = tip
+            existing.icon = icon
+            existing.percent = item.percent
+        for guid in list(self._slots):
+            if guid not in desired_guids:
+                self._delete_icon(guid)
 
-    def _delete_icon(self, uid: int) -> None:
-        data = _make_nid(self.hwnd, uid)
-        shell32.Shell_NotifyIconW(NIM_DELETE, ctypes.byref(data))
-        self._slots.pop(uid, None)
-        self._log(f"tray icon deleted uid={uid}")
+    def _add_icon(
+        self, guid: str, uid: int, item: TrayDisplayItem, icon: int, tip: str
+    ) -> bool:
+        # 先按 GUID 删除一次。NIM_ADD 对“同一 GUID 的旧图标”不一定真的
+        # 接管：如果旧进程已经死了，Shell 可能只留下一个没有所有者的幽灵，
+        # 后续 NIM_MODIFY 会失败。显式删除后再添加，才能保证新窗口拥有
+        # 这个图标和点击回调。删除不存在的 GUID 失败可以忽略。
+        delete = _make_nid(self.hwnd, uid, guid)
+        delete.uFlags = NIF_GUID
+        shell32.Shell_NotifyIconW(NIM_DELETE, ctypes.byref(delete))
+
+        data = _make_nid(self.hwnd, uid, guid)
+        data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP | NIF_GUID
+        data.hIcon = icon
+        data.szTip = tip[:127]
+        if not shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(data)):
+            self._log(f"NIM_ADD failed for guid={guid}")
+            return False
+        data.uVersion = NOTIFYICON_VERSION_4
+        shell32.Shell_NotifyIconW(NIM_SETVERSION, ctypes.byref(data))
+        self._slots[guid] = TraySlot(
+            guid=guid, uid=uid, title=item.name, tip=tip, icon=icon,
+            percent=item.percent,
+        )
+        self._log(f"tray icon added uid={uid} guid={guid} tip={tip}")
+        return True
+
+    def _delete_icon(self, guid: str) -> None:
+        data = _make_nid(self.hwnd, 0, guid)
+        data.uFlags = NIF_GUID
+        if not shell32.Shell_NotifyIconW(NIM_DELETE, ctypes.byref(data)):
+            self._log(f"NIM_DELETE failed for guid={guid}")
+            return
+        self._slots.pop(guid, None)
+        self._log(f"tray icon deleted guid={guid}")
 
     def _remove_all_icons(self) -> None:
-        for uid in list(self._slots):
-            self._delete_icon(uid)
-        self._slots.clear()
+        # 删除失败时保留槽位，让退出路径的第二次调用可以重试；强行清空
+        # 会让失败的图标永远失去被删除的机会。
+        for _ in range(2):
+            for guid in list(self._slots):
+                self._delete_icon(guid)
+            if not self._slots:
+                break
 
     @property
     def icon_count(self) -> int:
